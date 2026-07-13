@@ -15,11 +15,14 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
 # --- Gemini / AI config ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-image")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-image").strip()
 
 # --- Database ---
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./local.db")
+# .strip() guards against trailing newlines/whitespace that can sneak in when
+# a connection string is copy-pasted into a dashboard env var field — psycopg2
+# will otherwise try to connect to a database literally named "...\n".
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./local.db").strip()
 
 # --- Server ---
 PORT = int(os.getenv("PORT", "8000"))
