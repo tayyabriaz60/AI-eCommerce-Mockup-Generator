@@ -1,7 +1,7 @@
 # NOTE: Docker requires .dockerignore to live at the build *context* root.
-# Since backend/Dockerfile is built with the repo root as context (so it can
-# also COPY the sibling frontend/ folder — see render.yaml dockerContext),
-# this file lives here rather than inside backend/.
+# The Dockerfile lives at the repo root and is built with the repo root as
+# context (so it can also COPY the sibling frontend/ folder), so this file
+# lives here too rather than inside backend/.
 
 __pycache__/
 *.pyc

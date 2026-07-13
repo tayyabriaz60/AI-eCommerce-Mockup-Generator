@@ -9,7 +9,7 @@ services:
     name: ai-mockup-generator
     runtime: docker
     plan: free
-    dockerfilePath: ./backend/Dockerfile
+    dockerfilePath: ./Dockerfile
     dockerContext: .
     envVars:
       - key: GEMINI_API_KEY

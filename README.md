@@ -31,14 +31,14 @@ backend/
   static/generated/          # generated mockups (gitignored, kept via .gitkeep)
   static/uploads/            # uploaded source images (gitignored, kept via .gitkeep)
   requirements.txt
-  Dockerfile                 # built with the REPO ROOT as context (see below)
   .env.example
 frontend/
   index.html
   style.css
   app.js
+Dockerfile                    # at repo root (see Docker section) — not inside backend/
+.dockerignore                 # lives alongside Dockerfile, at repo root
 render.yaml
-.dockerignore                 # lives at repo root, not backend/ (see Docker section)
 ```
 
 ## Local Setup
@@ -132,22 +132,26 @@ This repo includes a `render.yaml` (Render "Blueprint") that provisions:
 - **`ai-mockup-generator`** — a Docker-based Web Service running the FastAPI backend (which also serves the frontend static files, so this is the only service you need).
 - **`ai-mockup-db`** — a managed Render Postgres instance, wired into the web service via `DATABASE_URL`.
 
-The service uses `runtime: docker` and builds from `backend/Dockerfile`. Because `main.py` mounts the sibling `frontend/` folder using a path relative to `backend/` (`BASE_DIR.parent / "frontend"`), the Docker build context is the **repository root**, not `backend/` — that's why `render.yaml` sets `dockerContext: .` alongside `dockerfilePath: ./backend/Dockerfile`. This lets the Dockerfile `COPY` both `backend/` and the sibling `frontend/` folder into the image while preserving that same relative layout (frontend ends up at `/frontend`, one level above the backend's `/app`).
+The service uses `runtime: docker` and builds from the `Dockerfile` at the **repository root** (deliberately *not* inside `backend/`). This matters for two reasons:
+
+1. Render's zero-config Docker defaults are `Dockerfile Path = ./Dockerfile` and `Build Context = repo root`. Keeping the Dockerfile at the root means the build works even if a service was created by hand in the dashboard and never actually reads `render.yaml` (Render only applies `render.yaml`'s `dockerfilePath`/`dockerContext` to services created via **New → Blueprint** — manually created services ignore it and just use their own dashboard settings, which default to `./Dockerfile`).
+2. `main.py` mounts the sibling `frontend/` folder using a path relative to `backend/` (`BASE_DIR.parent / "frontend"`), so the build context must include both `backend/` and `frontend/` — i.e. the repo root, not `backend/` alone.
 
 ### Steps
 
 1. Push this repo to GitHub.
 2. In the Render dashboard: **New → Blueprint**, point it at your repo. Render will read `render.yaml`, build the Docker image, and provision both services.
+   - If you instead create the Web Service manually (not via Blueprint), Render's default `Dockerfile Path` (`./Dockerfile`) and `Build Context` (repo root) already match this repo's layout, so no extra dashboard configuration is needed.
 3. Set the `GEMINI_API_KEY` environment variable on the web service (marked `sync: false` in `render.yaml`, so Render will prompt for it rather than storing it in the blueprint).
-4. Deploy. Render builds the image from `backend/Dockerfile` and runs the container's `CMD` (`uvicorn main:app --host 0.0.0.0 --port $PORT`).
+4. Deploy. Render builds the image from the root `Dockerfile` and runs the container's `CMD` (`uvicorn main:app --host 0.0.0.0 --port $PORT`).
 5. Once live, visit the service URL — it serves both the app UI and the API from one origin.
 
 ### Building/running the Docker image locally
 
-Run these from the **repo root** (not `backend/`), since the build context must include the sibling `frontend/` folder:
+Run these from the **repo root**, since the build context must include both `backend/` and the sibling `frontend/` folder:
 
 ```bash
-docker build -f backend/Dockerfile -t ai-mockup-generator .
+docker build -t ai-mockup-generator .
 docker run --env-file backend/.env -p 8000:8000 ai-mockup-generator
 ```
 
@@ -156,7 +160,7 @@ Then open http://localhost:8000.
 ### Manual setup in the Render dashboard (without `render.yaml`)
 
 1. Create a **Postgres** instance on Render, copy its connection string.
-2. Create a **Web Service**, set **Language/Runtime** to **Docker**, and set the **Dockerfile Path** to `backend/Dockerfile`. Leave the Docker build context as the repo root (default) so the sibling `frontend/` folder is included.
+2. Create a **Web Service**, set **Language/Runtime** to **Docker**. The default **Dockerfile Path** (`./Dockerfile`) and **Docker Build Context Directory** (repo root) already work — no changes needed.
 3. Add env vars: `GEMINI_API_KEY`, `GEMINI_MODEL`, `DATABASE_URL` (from step 1), `CORS_ORIGINS`.
 
 ### Alternative: native Python runtime (no Docker)
