@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Mockup Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="site-header">
+      <div class="logo">
+        <span class="logo-badge">✦</span>
+        <span class="logo-text">AI Mockup Generator</span>
+      </div>
+      <p class="tagline">Turn any design into a realistic product photo in seconds</p>
+    </header>
+
+    <main class="layout">
+      <!-- Left column: controls -->
+      <section class="card panel-upload">
+        <h2 class="card-title">1. Upload your design</h2>
+
+        <div id="dropzone" class="dropzone">
+          <input type="file" id="fileInput" accept="image/png, image/jpeg" hidden />
+          <div id="dropzoneEmpty" class="dropzone-empty">
+            <div class="upload-icon">⬆</div>
+            <p><strong>Click to upload</strong> or drag &amp; drop</p>
+            <p class="hint">PNG or JPG, up to 10MB</p>
+          </div>
+          <div id="dropzonePreview" class="dropzone-preview hidden">
+            <img id="previewImg" alt="Uploaded design preview" />
+            <button type="button" id="removeImageBtn" class="btn-remove" title="Remove image">✕</button>
+          </div>
+        </div>
+
+        <h2 class="card-title spaced">2. Choose options</h2>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>Marketplace</span>
+            <select id="platformSelect"></select>
+          </label>
+
+          <label class="field">
+            <span>Mockup Style</span>
+            <select id="styleSelect"></select>
+          </label>
+
+          <label class="field">
+            <span>Product Type</span>
+            <select id="productTypeSelect"></select>
+          </label>
+        </div>
+
+        <button id="generateBtn" class="btn-primary" disabled>
+          <span id="generateBtnText">Generate Mockup</span>
+          <span id="generateSpinner" class="spinner hidden"></span>
+        </button>
+
+        <p id="errorMessage" class="error-message hidden"></p>
+      </section>
+
+      <!-- Right column: result -->
+      <section class="card panel-result">
+        <h2 class="card-title">Result</h2>
+        <div id="resultEmpty" class="result-empty">
+          <div class="result-empty-icon">🖼️</div>
+          <p>Your generated mockup will appear here</p>
+        </div>
+        <div id="resultContent" class="result-content hidden">
+          <img id="resultImg" alt="Generated mockup" />
+          <a id="downloadBtn" class="btn-secondary" download="mockup.png">
+            Download Mockup
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <section class="history-section">
+      <h2 class="card-title">Recent Generations</h2>
+      <div id="historyGrid" class="history-grid"></div>
+      <p id="historyEmpty" class="history-empty hidden">No generations yet — create your first mockup above.</p>
+    </section>
+
+    <footer class="site-footer">
+      <p>AI eCommerce Mockup Generator · MVP built with FastAPI + Gemini</p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
