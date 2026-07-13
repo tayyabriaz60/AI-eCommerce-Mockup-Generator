@@ -1,0 +1,28 @@
+# NOTE: Docker requires .dockerignore to live at the build *context* root.
+# Since backend/Dockerfile is built with the repo root as context (so it can
+# also COPY the sibling frontend/ folder — see render.yaml dockerContext),
+# this file lives here rather than inside backend/.
+
+__pycache__/
+*.pyc
+.env
+backend/.env
+venv/
+.venv/
+backend/.venv/
+
+# MVP local image storage — don't bake user-generated files into the image
+static/generated/*
+!static/generated/.gitkeep
+backend/static/generated/*
+!backend/static/generated/.gitkeep
+backend/static/uploads/*
+!backend/static/uploads/.gitkeep
+
+.git
+.gitignore
+
+# Editor/OS cruft
+.DS_Store
+.vscode/
+.idea/
