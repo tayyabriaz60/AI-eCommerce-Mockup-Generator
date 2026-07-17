@@ -31,12 +31,12 @@ backend/
   static/generated/          # generated mockups (gitignored, kept via .gitkeep)
   static/uploads/            # uploaded source images (gitignored, kept via .gitkeep)
   requirements.txt
-  Dockerfile                 # built with repo root as context (see Render section)
   .env.example
 frontend/
   index.html
   style.css
   app.js
+Dockerfile                    # at repo root — Render's default Docker path (see Render section)
 .dockerignore                 # at repo root (Docker build context root)
 render.yaml
 ```
@@ -146,7 +146,7 @@ This repo includes a `render.yaml` (Render "Blueprint") that provisions:
 - **`ai-mockup-generator`** — a Docker-based Web Service running the FastAPI backend (which also serves the frontend static files, so this is the only service you need).
 - **`ai-mockup-db`** — a managed Render Postgres instance, wired into the web service via `DATABASE_URL`.
 
-The service uses `runtime: docker`, `dockerfilePath: ./backend/Dockerfile`, and `dockerContext: .` (repo root). The repo-root build context is required because `main.py` mounts the sibling `frontend/` folder (`BASE_DIR.parent / "frontend"`), so the Docker build must include both `backend/` and `frontend/`.
+The service uses `runtime: docker`, `dockerfilePath: ./Dockerfile`, and `dockerContext: .` (repo root). The Dockerfile lives at the **repository root** (not inside `backend/`) because Render's default Docker settings — and manually-created services that never read `render.yaml` — look for `./Dockerfile` at the repo root. The build context must also be the repo root so the Docker build can include both `backend/` and the sibling `frontend/` folder (`main.py` mounts it via `BASE_DIR.parent / "frontend"`).
 
 ### Steps
 
@@ -154,7 +154,7 @@ The service uses `runtime: docker`, `dockerfilePath: ./backend/Dockerfile`, and 
 2. In the Render dashboard: **New → Blueprint**, point it at your repo. Render will read `render.yaml`, build the Docker image, and provision both services.
 3. **Manually add `HF_API_TOKEN`** in the web service's **Environment** tab. It is marked `sync: false` in `render.yaml`, so Render will not auto-generate it — paste your own Hugging Face token there after the Blueprint is created.
 4. Confirm `HF_MODEL` is set (defaults to `black-forest-labs/FLUX.1-Kontext-dev` via `render.yaml`) and that `DATABASE_URL` is wired to your Postgres instance.
-5. Deploy. Render builds from `backend/Dockerfile` and runs `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+5. Deploy. Render builds from the root `Dockerfile` and runs `uvicorn main:app --host 0.0.0.0 --port $PORT`.
 6. Once live, visit the service URL — it serves both the app UI and the API from one origin.
 
 > **Cold-start note:** The first image generation request after a deploy or long idle period may take **20–60 seconds** while Hugging Face loads the FLUX Kontext model. This is expected behavior, not a bug. Subsequent requests are much faster while the model stays warm.
@@ -166,7 +166,7 @@ Also accept the FLUX.1 Kontext Dev license on its [model page](https://huggingfa
 Run these from the **repo root**, since the build context must include both `backend/` and the sibling `frontend/` folder:
 
 ```bash
-docker build -f backend/Dockerfile -t ai-mockup-generator .
+docker build -t ai-mockup-generator .
 docker run --env-file backend/.env -p 8000:8000 ai-mockup-generator
 ```
 
@@ -175,7 +175,7 @@ Then open http://localhost:8000.
 ### Manual setup in the Render dashboard (without `render.yaml`)
 
 1. Create a **Postgres** instance on Render, copy its connection string.
-2. Create a **Web Service**, set **Language/Runtime** to **Docker**, **Dockerfile Path** to `backend/Dockerfile`, and **Docker Build Context Directory** to the repo root (`.`).
+2. Create a **Web Service**, set **Language/Runtime** to **Docker**. Leave **Dockerfile Path** as the default (`./Dockerfile`) and **Docker Build Context Directory** as the repo root (`.`).
 3. Add env vars: `HF_API_TOKEN` (paste manually), `HF_MODEL`, `DATABASE_URL`, `CORS_ORIGINS`.
 
 ### Alternative: native Python runtime (no Docker)
