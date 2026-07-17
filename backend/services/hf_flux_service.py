@@ -12,7 +12,7 @@ import time
 from huggingface_hub import InferenceClient
 from huggingface_hub.errors import BadRequestError, HfHubHTTPError, InferenceTimeoutError
 
-from config import HF_API_TOKEN, HF_MODEL
+from config import HF_API_TOKEN, HF_MODEL, HF_PROVIDER
 
 logger = logging.getLogger("hf_flux_service")
 
@@ -36,7 +36,11 @@ def _get_client() -> InferenceClient:
             raise HfFluxGenerationError(
                 "Server is missing HF_API_TOKEN configuration. Please set it in your environment."
             )
-        _client = InferenceClient(token=HF_API_TOKEN, timeout=INFERENCE_TIMEOUT_SECONDS)
+        _client = InferenceClient(
+            token=HF_API_TOKEN,
+            provider=HF_PROVIDER,
+            timeout=INFERENCE_TIMEOUT_SECONDS,
+        )
     return _client
 
 
@@ -141,7 +145,11 @@ def _friendly_http_error(exc: HfHubHTTPError) -> str:
     if status_code == 429 or "RATE LIMIT" in upper:
         return "Hugging Face API rate limit exceeded. Please wait a moment and try again."
     if status_code in (401, 403) or "UNAUTHORIZED" in upper:
-        return "Server is not authorized to call Hugging Face (check HF_API_TOKEN)."
+        return (
+            "Server is not authorized to call Hugging Face. Check HF_API_TOKEN, ensure the "
+            "token has 'Inference Providers' permission, and accept the FLUX.1-Kontext-dev "
+            "model license on Hugging Face."
+        )
     if status_code == 400 or isinstance(exc, BadRequestError) or "INVALID" in upper:
         return "The uploaded image or options were invalid. Please try a different image."
     if status_code == 503 or "LOADING" in upper:
