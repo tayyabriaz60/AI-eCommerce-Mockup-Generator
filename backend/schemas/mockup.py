@@ -21,6 +21,12 @@ class HistoryItem(BaseModel):
 
 class HistoryResponse(BaseModel):
     items: list[HistoryItem]
+    total: int
+
+
+class DeleteGenerationResponse(BaseModel):
+    success: bool
+    id: int
 
 
 class ErrorResponse(BaseModel):

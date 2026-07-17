@@ -45,3 +45,15 @@ def get_image_url(path: Path) -> str:
     a passthrough or be removed.
     """
     return f"{STATIC_URL_PREFIX}/{path.parent.name}/{path.name}"
+
+
+def delete_image(path: Path | str) -> None:
+    """Delete a locally stored image file if it exists.
+
+    Silently skips missing files so callers can always attempt cleanup
+    without extra existence checks. A future cloud backend would delete
+    the object at the provider instead.
+    """
+    file_path = Path(path)
+    if file_path.is_file():
+        file_path.unlink()

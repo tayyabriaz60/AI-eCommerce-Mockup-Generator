@@ -1,14 +1,20 @@
 """Routes for generating mockups and fetching generation history."""
 import logging
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from config import ALLOWED_IMAGE_CONTENT_TYPES, MAX_UPLOAD_SIZE_BYTES
 from models.db import get_db
 from models.schema import Generation
-from schemas.mockup import GenerateResponse, HistoryItem, HistoryResponse
+from schemas.mockup import (
+    DeleteGenerationResponse,
+    GenerateResponse,
+    HistoryItem,
+    HistoryResponse,
+)
 from services import storage
 from services.hf_flux_service import HfFluxGenerationError, generate_mockup_image
 from services.prompt_builder import build_prompt
@@ -16,6 +22,17 @@ from services.prompt_builder import build_prompt
 logger = logging.getLogger("mockup_router")
 
 router = APIRouter(prefix="/api", tags=["mockup"])
+
+
+def _history_item(row: Generation) -> HistoryItem:
+    return HistoryItem(
+        id=row.id,
+        image_url=storage.get_image_url(Path(row.output_image_path)),
+        platform=row.platform,
+        style=row.style,
+        product_type=row.product_type,
+        created_at=row.created_at,
+    )
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -72,22 +89,52 @@ async def generate_mockup(
 
 
 @router.get("/history", response_model=HistoryResponse)
-def get_history(db: Session = Depends(get_db)):
-    from pathlib import Path
+def get_history(
+    limit: int = Query(default=12, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    try:
+        total = db.scalar(select(func.count()).select_from(Generation)) or 0
+        rows = db.execute(
+            select(Generation)
+            .order_by(Generation.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        ).scalars().all()
 
-    rows = db.execute(
-        select(Generation).order_by(Generation.created_at.desc()).limit(10)
-    ).scalars().all()
-
-    items = [
-        HistoryItem(
-            id=row.id,
-            image_url=storage.get_image_url(Path(row.output_image_path)),
-            platform=row.platform,
-            style=row.style,
-            product_type=row.product_type,
-            created_at=row.created_at,
+        return HistoryResponse(
+            items=[_history_item(row) for row in rows],
+            total=total,
         )
-        for row in rows
-    ]
-    return HistoryResponse(items=items)
+    except Exception as exc:
+        logger.exception("Failed to fetch generation history")
+        raise HTTPException(
+            status_code=500,
+            detail="Could not load generation history. Please try again.",
+        ) from exc
+
+
+@router.delete("/history/{generation_id}", response_model=DeleteGenerationResponse)
+def delete_generation(generation_id: int, db: Session = Depends(get_db)):
+    generation = db.get(Generation, generation_id)
+    if generation is None:
+        raise HTTPException(status_code=404, detail=f"Generation {generation_id} not found.")
+
+    input_path = generation.input_image_path
+    output_path = generation.output_image_path
+
+    try:
+        storage.delete_image(input_path)
+        storage.delete_image(output_path)
+        db.delete(generation)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to delete generation %s", generation_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not delete this generation. Please try again.",
+        ) from exc
+
+    return DeleteGenerationResponse(success=True, id=generation_id)

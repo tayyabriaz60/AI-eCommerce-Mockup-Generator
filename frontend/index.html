@@ -80,15 +80,43 @@
     </main>
 
     <section class="history-section">
-      <h2 class="card-title">Recent Generations</h2>
-      <div id="historyGrid" class="history-grid"></div>
-      <p id="historyEmpty" class="history-empty hidden">No generations yet — create your first mockup above.</p>
+      <div class="history-header">
+        <h2 class="card-title">Recent Generations</h2>
+        <p id="historyCount" class="history-count hidden"></p>
+      </div>
+
+      <div id="historySkeleton" class="history-grid history-skeleton" aria-hidden="true"></div>
+
+      <div id="historyGrid" class="history-grid hidden" aria-live="polite"></div>
+
+      <div id="historyEmpty" class="history-empty-state hidden">
+        <div class="history-empty-icon" aria-hidden="true">🖼️</div>
+        <h3>No mockups yet</h3>
+        <p>Generate your first one above — it will show up here in your gallery.</p>
+      </div>
+
+      <div class="history-footer">
+        <button type="button" id="loadMoreBtn" class="btn-load-more hidden">Load More</button>
+      </div>
     </section>
 
     <footer class="site-footer">
-      <p>AI eCommerce Mockup Generator · MVP built with FastAPI + Gemini</p>
+      <p>AI eCommerce Mockup Generator · MVP built with FastAPI + FLUX Kontext</p>
     </footer>
   </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Mockup preview">
+    <div class="lightbox-backdrop" id="lightboxBackdrop"></div>
+    <div class="lightbox-panel">
+      <button type="button" class="lightbox-close" id="lightboxClose" aria-label="Close preview">✕</button>
+      <img id="lightboxImg" alt="Full-size mockup preview" />
+      <a id="lightboxDownload" class="btn-secondary lightbox-download" download="mockup.png">Download</a>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="app.js"></script>
 </body>
