@@ -9,13 +9,13 @@ services:
     name: ai-mockup-generator
     runtime: docker
     plan: free
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./backend/Dockerfile
     dockerContext: .
     envVars:
-      - key: GEMINI_API_KEY
+      - key: HF_API_TOKEN
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-2.5-flash-image
+      - key: HF_MODEL
+        value: black-forest-labs/FLUX.1-Kontext-dev
       - key: DATABASE_URL
         fromDatabase:
           name: ai-mockup-db

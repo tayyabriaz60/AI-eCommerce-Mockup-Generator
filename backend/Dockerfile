@@ -1,14 +1,11 @@
 # AI eCommerce Mockup Generator — backend image.
 #
-# Lives at the REPOSITORY ROOT (not backend/) so Render's default Docker
-# settings (Dockerfile Path = ./Dockerfile, Build Context = repo root) work
-# out of the box, with no dashboard configuration required. This also means
-# the build context naturally includes both backend/ and the sibling
-# frontend/ folder, which main.py mounts via a path relative to backend/
-# (BASE_DIR.parent / "frontend").
+# Built with the REPOSITORY ROOT as context (render.yaml: dockerContext=.),
+# because main.py mounts the sibling frontend/ folder via a path relative to
+# backend/ (BASE_DIR.parent / "frontend").
 #
 # Local build/run from the repo root:
-#   docker build -t ai-mockup-generator .
+#   docker build -f backend/Dockerfile -t ai-mockup-generator .
 #   docker run --env-file backend/.env -p 8000:8000 ai-mockup-generator
 
 FROM python:3.11-slim

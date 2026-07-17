@@ -1,38 +1,49 @@
 """
-Builds the text prompt sent to Gemini based on the user's selections.
+Builds the text prompt sent to FLUX Kontext based on the user's selections.
 
-Kept isolated from gemini_service.py so prompt wording can be iterated on
-independently of the API call plumbing.
+Kontext expects editing-style instructions (e.g. "Place this design on a white
+t-shirt, studio lighting, realistic fabric folds") rather than open-ended
+generation prompts. Kept isolated from hf_flux_service.py so prompt wording
+can be iterated on independently of the API call plumbing.
 """
 
 STYLE_DESCRIPTIONS = {
-    "White Background": "a clean, pure white studio background with soft, even lighting",
-    "Studio Lighting": "a professional photography studio setup with dramatic, well-controlled lighting and subtle shadows",
-    "Lifestyle Scene": "a natural, real-world lifestyle setting where the product is used or displayed in context (e.g. a home, cafe, or outdoor scene)",
-    "Flat Lay": "a top-down flat lay arrangement on a styled surface with complementary props",
-    "Minimalist": "a minimalist scene with lots of negative space, muted neutral tones, and simple composition",
+    "White Background": "clean pure white studio background, soft even lighting",
+    "Studio Lighting": "professional studio lighting, dramatic controlled light, subtle shadows",
+    "Lifestyle Scene": "natural lifestyle setting where the product is used or displayed in context",
+    "Flat Lay": "top-down flat lay on a styled surface with complementary props",
+    "Minimalist": "minimalist scene with negative space, muted neutral tones, simple composition",
 }
 
 PLATFORM_NOTES = {
-    "Etsy": "a handmade/artisanal marketplace listing photo, warm and inviting",
-    "Shopify": "a polished branded storefront product photo",
-    "Amazon": "a bright, clear, detail-oriented marketplace listing photo",
-    "TikTok Shop": "an eye-catching, social-media-native product photo that feels authentic and scroll-stopping",
-    "Custom": "a general-purpose eCommerce product photo",
+    "Etsy": "warm artisanal marketplace listing photo",
+    "Shopify": "polished branded storefront product photo",
+    "Amazon": "bright clear detail-oriented marketplace listing photo",
+    "TikTok Shop": "eye-catching social-media-native product photo, authentic and scroll-stopping",
+    "Custom": "general-purpose eCommerce product photo",
+}
+
+PRODUCT_SURFACE_HINTS = {
+    "T-shirt": "realistic fabric folds and natural drape",
+    "Mug": "realistic ceramic surface with subtle reflections",
+    "Poster/Wall Art": "realistic framed wall art with correct perspective",
+    "Phone Case": "realistic phone case fit with accurate proportions",
+    "Tote Bag": "realistic canvas texture and natural bag shape",
+    "Sticker": "realistic sticker applied to a clean surface",
+    "Other": "realistic product surface with accurate proportions",
 }
 
 
 def build_prompt(platform: str, style: str, product_type: str) -> str:
-    """Build the Gemini prompt for a given platform / style / product type combo."""
+    """Build a Kontext-style editing instruction for platform / style / product type."""
     style_desc = STYLE_DESCRIPTIONS.get(style, style)
     platform_desc = PLATFORM_NOTES.get(platform, platform)
+    surface_hint = PRODUCT_SURFACE_HINTS.get(product_type, "realistic product surface")
 
     return (
-        "Generate a realistic, high-quality product mockup. "
-        f"Product type: {product_type}. "
-        f"Show this exact design/image applied realistically onto the {product_type.lower()}, "
-        f"photographed in {style_desc}, suitable for {platform_desc} on {platform}. "
-        "Maintain accurate lighting, shadows, correct proportions and perspective, and preserve the "
-        "original design's colors and details exactly as uploaded — do not distort or alter the design itself. "
-        "The output should look like a professional eCommerce product photo, sharp and high resolution."
+        f"Place this exact design onto a {product_type.lower()} mockup, "
+        f"{style_desc}, {surface_hint}. "
+        f"Keep the uploaded design unchanged — preserve its colors, details, and proportions exactly. "
+        f"Make it look like a professional {platform_desc} suitable for {platform}, "
+        "with accurate lighting, shadows, and perspective. Sharp, high-resolution product photo."
     )

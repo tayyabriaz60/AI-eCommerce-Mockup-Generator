@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from config import BASE_DIR, CORS_ORIGINS, GENERATED_DIR, UPLOADS_DIR
+from config import BASE_DIR, CORS_ORIGINS, GENERATED_DIR, UPLOADS_DIR, validate_config
 from models.db import init_db
 from routers import mockup
 
@@ -25,6 +25,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
+    validate_config()
     init_db()
 
 

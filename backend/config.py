@@ -14,9 +14,23 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# --- Gemini / AI config ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-image").strip()
+# --- Hugging Face / AI config ---
+HF_API_TOKEN = os.getenv("HF_API_TOKEN", "").strip()
+HF_MODEL = os.getenv("HF_MODEL", "black-forest-labs/FLUX.1-Kontext-dev").strip()
+
+
+def validate_config() -> None:
+    """Fail fast at startup if required configuration is missing."""
+    if not HF_API_TOKEN:
+        raise RuntimeError(
+            "HF_API_TOKEN is not set. Add your Hugging Face access token to the "
+            "environment (see .env.example). On Render, paste it in the service's "
+            "Environment tab."
+        )
+    if not HF_MODEL:
+        raise RuntimeError(
+            "HF_MODEL is not set. Default is black-forest-labs/FLUX.1-Kontext-dev."
+        )
 
 # --- Database ---
 # .strip() guards against trailing newlines/whitespace that can sneak in when

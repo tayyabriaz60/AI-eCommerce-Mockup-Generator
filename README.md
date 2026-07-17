@@ -1,6 +1,6 @@
 # AI eCommerce Mockup Generator (MVP)
 
-Upload a product design (t-shirt graphic, mug design, poster art, etc.), pick a marketplace + mockup style, and get back an AI-generated, realistic product mockup — powered by Google's Gemini image generation model (`gemini-2.5-flash-image`, aka "nano banana").
+Upload a product design (t-shirt graphic, mug design, poster art, etc.), pick a marketplace + mockup style, and get back an AI-generated, realistic product mockup — powered by Hugging Face's **FLUX.1 Kontext Dev** image-editing model (`black-forest-labs/FLUX.1-Kontext-dev`).
 
 **Flow:** upload → choose options → generate → preview/download. Anonymous, global "Recent Generations" history (last 10) is saved to Postgres.
 
@@ -8,7 +8,7 @@ Upload a product design (t-shirt graphic, mug design, poster art, etc.), pick a 
 
 - **Frontend:** Plain HTML + CSS + Vanilla JS (no build step) — `frontend/`
 - **Backend:** Python + FastAPI — `backend/`
-- **AI:** Google Gemini via the `google-genai` SDK
+- **AI:** Hugging Face Inference API — FLUX.1 Kontext Dev via `huggingface_hub`
 - **Database:** PostgreSQL (SQLAlchemy + psycopg2), falls back to local SQLite if `DATABASE_URL` isn't set
 - **Storage:** Local disk for MVP, served via FastAPI static files, abstracted behind `services/storage.py` so a real cloud provider (S3, Cloudinary, etc.) can be swapped in later
 - **Deployment:** Render (single Web Service serves both the API and the static frontend)
@@ -21,9 +21,9 @@ backend/
   config.py                # centralized env-driven configuration
   routers/mockup.py         # POST /api/generate, GET /api/history
   services/
-    gemini_service.py       # Gemini API wrapper
+    hf_flux_service.py      # Hugging Face FLUX Kontext API wrapper
     storage.py              # save/serve image abstraction (local for MVP)
-    prompt_builder.py       # builds the Gemini prompt
+    prompt_builder.py       # builds the Kontext editing prompt
   models/
     db.py                   # SQLAlchemy engine/session
     schema.py                # Generation table
@@ -31,13 +31,13 @@ backend/
   static/generated/          # generated mockups (gitignored, kept via .gitkeep)
   static/uploads/            # uploaded source images (gitignored, kept via .gitkeep)
   requirements.txt
+  Dockerfile                 # built with repo root as context (see Render section)
   .env.example
 frontend/
   index.html
   style.css
   app.js
-Dockerfile                    # at repo root (see Docker section) — not inside backend/
-.dockerignore                 # lives alongside Dockerfile, at repo root
+.dockerignore                 # at repo root (Docker build context root)
 render.yaml
 ```
 
@@ -46,7 +46,8 @@ render.yaml
 ### 1. Prerequisites
 
 - Python 3.11+
-- A Gemini API key ([Google AI Studio](https://aistudio.google.com/apikey))
+- A Hugging Face access token with Inference API access ([Hugging Face settings](https://huggingface.co/settings/tokens))
+- Accept the FLUX.1 Kontext Dev model license on its [model page](https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev) (required before first API call)
 - (Optional for local dev) PostgreSQL — if you skip this, the app falls back to a local SQLite file so you can develop without installing Postgres.
 
 ### 2. Configure environment variables
@@ -56,15 +57,7 @@ cd backend
 cp .env.example .env
 ```
 
-Edit `backend/.env`:
-
-```
-GEMINI_API_KEY=your_gemini_api_key_here
-GEMINI_MODEL=gemini-2.5-flash-image
-DATABASE_URL=postgresql://user:password@host:port/dbname   # or leave unset to use local SQLite
-PORT=8000
-CORS_ORIGINS=http://localhost:3000,http://localhost:8000
-```
+Edit `backend/.env` (see [Environment Variables](#environment-variables) below).
 
 ### 3. Install dependencies
 
@@ -89,7 +82,7 @@ Open **http://localhost:8000** — FastAPI serves the `frontend/` folder directl
 
 1. Upload a PNG/JPG design.
 2. Pick a marketplace, mockup style, and product type.
-3. Click **Generate Mockup** and wait for the Gemini-generated result.
+3. Click **Generate Mockup** and wait for the FLUX Kontext result.
 4. Download the result, or check the "Recent Generations" grid at the bottom.
 
 ## API Reference
@@ -111,7 +104,7 @@ Response:
 { "id": 1, "image_url": "/static/generated/abcd1234.png", "created_at": "2026-07-13T12:00:00Z" }
 ```
 
-Errors (safety block, quota exceeded, invalid image, etc.) return a `4xx` with a friendly `{"detail": "..."}` message instead of a raw stack trace.
+Errors (rate limits, model loading, invalid image, etc.) return a `4xx` with a friendly `{"detail": "..."}` message instead of a raw stack trace.
 
 ### `GET /api/history`
 
@@ -125,6 +118,27 @@ Returns the last 10 generations:
 
 Simple health check → `{"status": "ok"}`.
 
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `HF_API_TOKEN` | **Yes** | — | Hugging Face access token with Inference API access. Create one at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). |
+| `HF_MODEL` | No | `black-forest-labs/FLUX.1-Kontext-dev` | Hugging Face model ID for image-to-image mockup generation. Swappable without code changes. |
+| `DATABASE_URL` | No (Render: auto) | `sqlite:///./local.db` | PostgreSQL connection string. Render Blueprint wires this from the managed Postgres instance. |
+| `PORT` | No | `8000` | Server port. Render sets this automatically in production. |
+| `CORS_ORIGINS` | No | `http://localhost:3000,http://localhost:8000` | Comma-separated allowed origins for local dev CORS. |
+
+Example `backend/.env`:
+
+```
+DATABASE_URL=
+HF_API_TOKEN=
+HF_MODEL=black-forest-labs/FLUX.1-Kontext-dev
+PORT=8000
+```
+
+The app validates `HF_API_TOKEN` at startup and exits with a clear error if it is missing.
+
 ## Deploying to Render (Docker)
 
 This repo includes a `render.yaml` (Render "Blueprint") that provisions:
@@ -132,26 +146,27 @@ This repo includes a `render.yaml` (Render "Blueprint") that provisions:
 - **`ai-mockup-generator`** — a Docker-based Web Service running the FastAPI backend (which also serves the frontend static files, so this is the only service you need).
 - **`ai-mockup-db`** — a managed Render Postgres instance, wired into the web service via `DATABASE_URL`.
 
-The service uses `runtime: docker` and builds from the `Dockerfile` at the **repository root** (deliberately *not* inside `backend/`). This matters for two reasons:
-
-1. Render's zero-config Docker defaults are `Dockerfile Path = ./Dockerfile` and `Build Context = repo root`. Keeping the Dockerfile at the root means the build works even if a service was created by hand in the dashboard and never actually reads `render.yaml` (Render only applies `render.yaml`'s `dockerfilePath`/`dockerContext` to services created via **New → Blueprint** — manually created services ignore it and just use their own dashboard settings, which default to `./Dockerfile`).
-2. `main.py` mounts the sibling `frontend/` folder using a path relative to `backend/` (`BASE_DIR.parent / "frontend"`), so the build context must include both `backend/` and `frontend/` — i.e. the repo root, not `backend/` alone.
+The service uses `runtime: docker`, `dockerfilePath: ./backend/Dockerfile`, and `dockerContext: .` (repo root). The repo-root build context is required because `main.py` mounts the sibling `frontend/` folder (`BASE_DIR.parent / "frontend"`), so the Docker build must include both `backend/` and `frontend/`.
 
 ### Steps
 
 1. Push this repo to GitHub.
 2. In the Render dashboard: **New → Blueprint**, point it at your repo. Render will read `render.yaml`, build the Docker image, and provision both services.
-   - If you instead create the Web Service manually (not via Blueprint), Render's default `Dockerfile Path` (`./Dockerfile`) and `Build Context` (repo root) already match this repo's layout, so no extra dashboard configuration is needed.
-3. Set the `GEMINI_API_KEY` environment variable on the web service (marked `sync: false` in `render.yaml`, so Render will prompt for it rather than storing it in the blueprint).
-4. Deploy. Render builds the image from the root `Dockerfile` and runs the container's `CMD` (`uvicorn main:app --host 0.0.0.0 --port $PORT`).
-5. Once live, visit the service URL — it serves both the app UI and the API from one origin.
+3. **Manually add `HF_API_TOKEN`** in the web service's **Environment** tab. It is marked `sync: false` in `render.yaml`, so Render will not auto-generate it — paste your own Hugging Face token there after the Blueprint is created.
+4. Confirm `HF_MODEL` is set (defaults to `black-forest-labs/FLUX.1-Kontext-dev` via `render.yaml`) and that `DATABASE_URL` is wired to your Postgres instance.
+5. Deploy. Render builds from `backend/Dockerfile` and runs `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+6. Once live, visit the service URL — it serves both the app UI and the API from one origin.
+
+> **Cold-start note:** The first image generation request after a deploy or long idle period may take **20–60 seconds** while Hugging Face loads the FLUX Kontext model. This is expected behavior, not a bug. Subsequent requests are much faster while the model stays warm.
+
+Also accept the FLUX.1 Kontext Dev license on its [model page](https://huggingface.co/black-forest-labs/FLUX.1-Kontext-dev) before your first API call (one-time, tied to your HF account).
 
 ### Building/running the Docker image locally
 
 Run these from the **repo root**, since the build context must include both `backend/` and the sibling `frontend/` folder:
 
 ```bash
-docker build -t ai-mockup-generator .
+docker build -f backend/Dockerfile -t ai-mockup-generator .
 docker run --env-file backend/.env -p 8000:8000 ai-mockup-generator
 ```
 
@@ -160,8 +175,8 @@ Then open http://localhost:8000.
 ### Manual setup in the Render dashboard (without `render.yaml`)
 
 1. Create a **Postgres** instance on Render, copy its connection string.
-2. Create a **Web Service**, set **Language/Runtime** to **Docker**. The default **Dockerfile Path** (`./Dockerfile`) and **Docker Build Context Directory** (repo root) already work — no changes needed.
-3. Add env vars: `GEMINI_API_KEY`, `GEMINI_MODEL`, `DATABASE_URL` (from step 1), `CORS_ORIGINS`.
+2. Create a **Web Service**, set **Language/Runtime** to **Docker**, **Dockerfile Path** to `backend/Dockerfile`, and **Docker Build Context Directory** to the repo root (`.`).
+3. Add env vars: `HF_API_TOKEN` (paste manually), `HF_MODEL`, `DATABASE_URL`, `CORS_ORIGINS`.
 
 ### Alternative: native Python runtime (no Docker)
 

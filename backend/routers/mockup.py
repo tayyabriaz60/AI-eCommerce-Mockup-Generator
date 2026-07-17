@@ -10,7 +10,7 @@ from models.db import get_db
 from models.schema import Generation
 from schemas.mockup import GenerateResponse, HistoryItem, HistoryResponse
 from services import storage
-from services.gemini_service import GeminiGenerationError, generate_mockup_image
+from services.hf_flux_service import HfFluxGenerationError, generate_mockup_image
 from services.prompt_builder import build_prompt
 
 logger = logging.getLogger("mockup_router")
@@ -41,12 +41,12 @@ async def generate_mockup(
     # 2. Build prompt
     prompt = build_prompt(platform=platform, style=style, product_type=product_type)
 
-    # 3. Call Gemini (image-to-image)
+    # 3. Call FLUX Kontext (image-to-image)
     try:
         result_bytes = generate_mockup_image(
             image_bytes=content, mime_type=image.content_type, prompt=prompt
         )
-    except GeminiGenerationError as exc:
+    except HfFluxGenerationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # 4. Save generated image
