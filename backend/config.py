@@ -19,8 +19,9 @@ HF_API_TOKEN = os.getenv("HF_API_TOKEN", "").strip()
 HF_MODEL = os.getenv("HF_MODEL", "black-forest-labs/FLUX.1-Kontext-dev").strip()
 # FLUX Kontext is served via HF Inference Providers (fal), not legacy serverless API.
 HF_PROVIDER = os.getenv("HF_PROVIDER", "fal-ai").strip()
-# Bill routed Inference Provider usage to your HF account (required for fal-ai via HF).
-HF_BILL_TO = os.getenv("HF_BILL_TO", "huggingface").strip()
+# Optional: set to your HF *organization name* to bill an Enterprise org account.
+# Leave empty/unset for personal accounts (default HF billing).
+HF_BILL_TO = os.getenv("HF_BILL_TO", "").strip()
 
 
 def validate_config() -> None:
@@ -30,6 +31,12 @@ def validate_config() -> None:
             "HF_API_TOKEN is not set. Add your Hugging Face access token to the "
             "environment (see .env.example). On Render, paste it in the service's "
             "Environment tab."
+        )
+    if not HF_API_TOKEN.startswith("hf_"):
+        raise RuntimeError(
+            "HF_API_TOKEN must be a Hugging Face user token (starts with hf_), not a "
+            "third-party provider key. Create one at huggingface.co/settings/tokens "
+            "with 'Make calls to Inference Providers' enabled."
         )
     if not HF_MODEL:
         raise RuntimeError(
