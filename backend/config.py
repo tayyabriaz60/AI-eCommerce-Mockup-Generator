@@ -19,6 +19,8 @@ HF_API_TOKEN = os.getenv("HF_API_TOKEN", "").strip()
 HF_MODEL = os.getenv("HF_MODEL", "black-forest-labs/FLUX.1-Kontext-dev").strip()
 # FLUX Kontext is served via HF Inference Providers (fal), not legacy serverless API.
 HF_PROVIDER = os.getenv("HF_PROVIDER", "fal-ai").strip()
+# Bill routed Inference Provider usage to your HF account (required for fal-ai via HF).
+HF_BILL_TO = os.getenv("HF_BILL_TO", "huggingface").strip()
 
 
 def validate_config() -> None:
