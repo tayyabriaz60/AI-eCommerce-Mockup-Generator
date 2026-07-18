@@ -1,83 +1,148 @@
 """
-Wraps Hugging Face Inference API calls for FLUX.1 Kontext image editing.
+Wraps the public Hugging Face ZeroGPU Space for FLUX.1 Kontext image editing.
 
-Model name and client config live here in one place so they're easy to tweak
-without touching the router or prompt logic.
+Uses gradio_client to call the community Space (HF_MODEL / default
+"black-forest-labs/FLUX.1-Kontext-dev") — free shared compute, no Inference
+Providers billing. Slower and less reliable than a paid API.
+
+Space API (verified via client.view_api() — re-logged on first client init):
+  api_name="/infer"
+  predict(input_image, prompt, seed, randomize_seed, guidance_scale, steps)
+    -> (result_image, seed)
+
+If the Space interface changes, adjust SPACE_API_NAME and _INFER_PARAM_* below,
+or inspect startup logs for the view_api() dump.
 """
-import io
-import json
-import logging
-import time
+from __future__ import annotations
 
-from huggingface_hub import InferenceClient
-from huggingface_hub.errors import BadRequestError, HfHubHTTPError, InferenceTimeoutError
+import io
+import logging
+import tempfile
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from pathlib import Path
+
+import httpx
+from gradio_client import Client
+from gradio_client.exceptions import AppError
+from gradio_client.utils import QueueError, TooManyRequestsError, handle_file
+from huggingface_hub.utils import RepositoryNotFoundError
 from PIL import Image
 
-from config import HF_API_TOKEN, HF_BILL_TO, HF_MODEL, HF_PROVIDER
+from config import HF_API_TOKEN, HF_MODEL, HF_SPACE_TIMEOUT_SECONDS
 
 logger = logging.getLogger("hf_flux_service")
 
-# Kontext cold starts can take 15–30s; default client timeout is too short.
-INFERENCE_TIMEOUT_SECONDS = 120.0
+# --- Space endpoint tuning (change here if the Space UI/API is updated) ---
+SPACE_API_NAME = "/infer"
+_INFER_PARAM_GUIDANCE_SCALE = 2.5
+_INFER_PARAM_STEPS = 28
+_INFER_PARAM_SEED = 0
+_INFER_PARAM_RANDOMIZE_SEED = True
+
+MSG_SPACE_BUSY = "The free AI model is busy right now, please try again in a minute."
+MSG_SPACE_UNAVAILABLE = (
+    "The mockup generator is temporarily unavailable, please try again shortly."
+)
+MSG_UNEXPECTED_RESPONSE = "Something went wrong generating your mockup."
+MSG_BAD_UPLOAD = (
+    "The uploaded image could not be processed. Please try a different PNG or JPG."
+)
 
 
 class HfFluxGenerationError(Exception):
     """Raised when FLUX/Kontext fails to produce a usable mockup image."""
 
 
-_client: InferenceClient | None = None
+_client: Client | None = None
+_api_logged = False
 
 
-def _get_client() -> InferenceClient:
+def _log_space_api(client: Client) -> None:
+    """Log the Space's Gradio API shape once so mismatches are easy to debug."""
+    global _api_logged
+    if _api_logged:
+        return
+    try:
+        client.view_api(all_endpoints=True, print_info=False)
+        api_info = client.view_api(return_format="dict", print_info=False)
+        logger.info(
+            "HF ZeroGPU Space %s API endpoints: %s",
+            HF_MODEL,
+            list(api_info.get("named_endpoints", {}).keys()),
+        )
+        infer = api_info.get("named_endpoints", {}).get(SPACE_API_NAME)
+        if infer:
+            param_names = [p.get("parameter_name") for p in infer.get("parameters", [])]
+            logger.info(
+                "Expected %s params: %s (adjust hf_flux_service.py if these differ)",
+                SPACE_API_NAME,
+                param_names,
+            )
+        else:
+            logger.warning(
+                "Space API endpoint %s not found — check view_api() output above and "
+                "update SPACE_API_NAME in hf_flux_service.py",
+                SPACE_API_NAME,
+            )
+    except Exception:
+        logger.exception("Could not introspect HF Space API via view_api()")
+    _api_logged = True
+
+
+def _get_client() -> Client:
     global _client
     if _client is None:
-        if not HF_API_TOKEN:
-            raise HfFluxGenerationError(
-                "Server is missing HF_API_TOKEN configuration. Please set it in your environment."
-            )
-        client_kwargs = {
-            "token": HF_API_TOKEN,
-            "provider": HF_PROVIDER,
-            "timeout": INFERENCE_TIMEOUT_SECONDS,
+        client_kwargs: dict = {
+            "verbose": False,
+            "httpx_kwargs": {
+                "timeout": httpx.Timeout(
+                    connect=30.0,
+                    read=60.0,
+                    write=60.0,
+                    pool=30.0,
+                )
+            },
         }
-        if HF_BILL_TO:
-            client_kwargs["bill_to"] = HF_BILL_TO
-        _client = InferenceClient(**client_kwargs)
+        if HF_API_TOKEN:
+            # gradio_client parameter is `token` (HF user access token).
+            client_kwargs["token"] = HF_API_TOKEN
+
+        try:
+            _client = Client(HF_MODEL, **client_kwargs)
+        except RepositoryNotFoundError as exc:
+            logger.exception("HF Space not found: %s", HF_MODEL)
+            raise HfFluxGenerationError(MSG_SPACE_UNAVAILABLE) from exc
+        except (httpx.ConnectError, httpx.NetworkError, OSError) as exc:
+            logger.exception("Could not connect to HF Space: %s", HF_MODEL)
+            raise HfFluxGenerationError(MSG_SPACE_UNAVAILABLE) from exc
+        except Exception as exc:
+            logger.exception("Failed to initialize gradio_client for %s", HF_MODEL)
+            raise HfFluxGenerationError(MSG_SPACE_UNAVAILABLE) from exc
+
+        _log_space_api(_client)
     return _client
 
 
 def generate_mockup_image(image_bytes: bytes, mime_type: str, prompt: str) -> bytes:
-    """Send the uploaded design + editing prompt to FLUX Kontext and return image bytes.
-
-    Raises HfFluxGenerationError with a user-friendly message on any failure
-    (rate limit, model loading, invalid input, etc.).
-    """
+    """Send the uploaded design + editing prompt to FLUX Kontext and return PNG bytes."""
     del mime_type  # normalized to PNG below regardless of upload type.
 
     png_bytes = _normalize_to_png(image_bytes)
-    client = _get_client()
 
     try:
-        result_image = _call_image_to_image(client, image_bytes=png_bytes, prompt=prompt)
+        result = _call_space_infer(png_bytes=png_bytes, prompt=prompt)
+        return _extract_image_bytes(result)
     except HfFluxGenerationError:
         raise
-    except (KeyError, TypeError, ValueError) as exc:
-        logger.exception("Unexpected HF response shape from Inference Providers")
-        raise HfFluxGenerationError(
-            "The AI service returned an unexpected response. If you're on a free Hugging Face "
-            "account, you may need Inference Provider credits — see huggingface.co/settings/billing."
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 - last resort catch for SDK/network issues
-        logger.exception("Unexpected error calling Hugging Face Inference API")
-        raise HfFluxGenerationError(
-            "Something went wrong while generating your mockup. Please try again."
-        ) from exc
-
-    return _pil_image_to_bytes(result_image)
+    except Exception as exc:
+        friendly = _friendly_error(exc)
+        if friendly:
+            raise HfFluxGenerationError(friendly) from exc
+        logger.exception("Unexpected error calling HF ZeroGPU Space")
+        raise HfFluxGenerationError(MSG_UNEXPECTED_RESPONSE) from exc
 
 
 def _normalize_to_png(image_bytes: bytes) -> bytes:
-    """Convert uploaded image bytes to PNG — fal/HF providers expect a standard raster format."""
     try:
         image = Image.open(io.BytesIO(image_bytes))
         if image.mode not in ("RGB", "RGBA"):
@@ -86,146 +151,99 @@ def _normalize_to_png(image_bytes: bytes) -> bytes:
         image.save(buffer, format="PNG")
         return buffer.getvalue()
     except Exception as exc:
-        raise HfFluxGenerationError(
-            "The uploaded image could not be processed. Please try a different PNG or JPG."
-        ) from exc
+        raise HfFluxGenerationError(MSG_BAD_UPLOAD) from exc
 
 
-def _call_image_to_image(client: InferenceClient, image_bytes: bytes, prompt: str):
-    """Call image_to_image once, with a single retry if the model is cold-starting."""
-    try:
-        # guidance_scale is NOT supported by the fal-ai Kontext endpoint via HF —
-        # passing it causes provider validation errors.
-        return client.image_to_image(
-            image=image_bytes,
-            prompt=prompt,
-            model=HF_MODEL,
-        )
-    except HfHubHTTPError as exc:
-        api_detail = _extract_api_error_detail(exc)
-        logger.error(
-            "HF image_to_image failed (status=%s): %s",
-            getattr(getattr(exc, "response", None), "status_code", "?"),
-            api_detail,
-        )
+def _call_space_infer(png_bytes: bytes, prompt: str):
+    """Call the Space /infer endpoint with a timeout for queue + generation."""
+    client = _get_client()
 
-        wait_seconds = _extract_estimated_wait(exc)
-        if wait_seconds is not None:
-            logger.info(
-                "HF model loading (estimated %.1fs); waiting once before retry", wait_seconds
-            )
-            time.sleep(wait_seconds)
-            try:
-                return client.image_to_image(
-                    image=image_bytes,
-                    prompt=prompt,
-                    model=HF_MODEL,
-                )
-            except HfHubHTTPError as retry_exc:
-                retry_detail = _extract_api_error_detail(retry_exc)
-                logger.exception(
-                    "HF image_to_image failed after model-loading retry: %s", retry_detail
-                )
-                raise HfFluxGenerationError(_friendly_http_error(retry_exc, retry_detail)) from retry_exc
-
-        raise HfFluxGenerationError(_friendly_http_error(exc, api_detail)) from exc
-    except InferenceTimeoutError as exc:
-        logger.exception("HF inference timed out")
-        raise HfFluxGenerationError(
-            "The AI service took too long to respond (the model may still be warming up). "
-            "Please try again in a moment."
-        ) from exc
-
-
-def _extract_api_error_detail(exc: HfHubHTTPError) -> str:
-    """Pull the most useful error string from an HF/fal HTTP error response."""
-    response = getattr(exc, "response", None)
-    if response is not None:
-        try:
-            payload = response.json()
-            if isinstance(payload, dict):
-                for key in ("error", "detail", "message"):
-                    if key in payload and payload[key]:
-                        value = payload[key]
-                        if isinstance(value, dict):
-                            return str(value.get("message") or value.get("detail") or value)
-                        return str(value)
-        except (json.JSONDecodeError, ValueError, TypeError):
-            pass
-        if response.text:
-            return response.text[:300]
-
-    return str(getattr(exc, "message", "") or exc)
-
-
-def _extract_estimated_wait(exc: HfHubHTTPError) -> float | None:
-    """Return estimated wait seconds if the API says the model is loading."""
-    response = getattr(exc, "response", None)
-    if response is None:
-        return None
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp.write(png_bytes)
+        tmp_path = tmp.name
 
     try:
-        payload = response.json()
-    except (json.JSONDecodeError, ValueError, TypeError):
-        payload = None
+        job = client.submit(
+            handle_file(tmp_path),
+            prompt,
+            _INFER_PARAM_SEED,
+            _INFER_PARAM_RANDOMIZE_SEED,
+            _INFER_PARAM_GUIDANCE_SCALE,
+            _INFER_PARAM_STEPS,
+            api_name=SPACE_API_NAME,
+        )
+        return job.result(timeout=HF_SPACE_TIMEOUT_SECONDS)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
-    if isinstance(payload, dict):
-        estimated = payload.get("estimated_time")
-        if estimated is not None:
-            try:
-                return max(1.0, float(estimated))
-            except (TypeError, ValueError):
-                pass
 
-        error_text = str(payload.get("error", "")).lower()
-        if "loading" in error_text:
-            return 20.0
+def _extract_image_bytes(result) -> bytes:
+    """Parse gradio_client output into raw PNG/JPEG bytes."""
+    image_payload = _unwrap_image_payload(result)
 
-    status_code = getattr(response, "status_code", None)
-    if status_code == 503:
-        return 20.0
+    if isinstance(image_payload, (bytes, bytearray)):
+        return bytes(image_payload)
 
-    if "loading" in str(exc).lower():
-        return 20.0
+    if isinstance(image_payload, str):
+        path = Path(image_payload)
+        if path.is_file():
+            return path.read_bytes()
+        if image_payload.startswith(("http://", "https://")):
+            return _download_image_url(image_payload)
+
+    if isinstance(image_payload, dict):
+        local_path = image_payload.get("path")
+        if local_path:
+            path = Path(local_path)
+            if path.is_file():
+                return path.read_bytes()
+        remote_url = image_payload.get("url")
+        if remote_url:
+            return _download_image_url(str(remote_url))
+
+    logger.error("Unexpected HF Space response shape: %r", result)
+    raise HfFluxGenerationError(MSG_UNEXPECTED_RESPONSE)
+
+
+def _unwrap_image_payload(result):
+    """The /infer endpoint returns (image, seed); take the image component."""
+    if isinstance(result, (list, tuple)) and result:
+        return result[0]
+    return result
+
+
+def _download_image_url(url: str) -> bytes:
+    try:
+        response = httpx.get(url, timeout=60.0, follow_redirects=True)
+        response.raise_for_status()
+        return response.content
+    except Exception:
+        logger.exception("Failed to download generated image from %s", url)
+        raise HfFluxGenerationError(MSG_UNEXPECTED_RESPONSE)
+
+
+def _friendly_error(exc: Exception) -> str | None:
+    """Map gradio/network exceptions to user-facing messages."""
+    if isinstance(exc, (QueueError, TooManyRequestsError)):
+        return MSG_SPACE_BUSY
+
+    if isinstance(exc, (TimeoutError, FuturesTimeoutError)):
+        return MSG_SPACE_BUSY
+
+    if isinstance(exc, httpx.TimeoutException):
+        return MSG_SPACE_BUSY
+
+    if isinstance(exc, (httpx.ConnectError, httpx.NetworkError, ConnectionError, OSError)):
+        return MSG_SPACE_UNAVAILABLE
+
+    if isinstance(exc, AppError):
+        message = str(exc).lower()
+        if any(word in message for word in ("queue", "busy", "rate", "wait", "full")):
+            return MSG_SPACE_BUSY
+        if any(word in message for word in ("unavailable", "down", "error", "failed")):
+            return MSG_SPACE_UNAVAILABLE
+
+    if isinstance(exc, RepositoryNotFoundError):
+        return MSG_SPACE_UNAVAILABLE
 
     return None
-
-
-def _friendly_http_error(exc: HfHubHTTPError, api_detail: str) -> str:
-    message = api_detail or str(getattr(exc, "message", "") or exc)
-    status_code = getattr(getattr(exc, "response", None), "status_code", None)
-    upper = message.upper()
-
-    if status_code == 402 or "CREDIT" in upper or "PAYMENT" in upper or "BILLING" in upper:
-        return (
-            "Hugging Face Inference credits are exhausted or billing is not set up. "
-            "Free accounts get ~$0.10/month — FLUX mockups need more. Add a payment method "
-            "or upgrade to PRO at huggingface.co/settings/billing, then try again."
-        )
-    if status_code == 429 or "RATE LIMIT" in upper:
-        return "Hugging Face API rate limit exceeded. Please wait a moment and try again."
-    if status_code in (401, 403) or "UNAUTHORIZED" in upper or "PERMISSION" in upper:
-        return (
-            "Server is not authorized to call Hugging Face Inference Providers. "
-            "Check HF_API_TOKEN has 'Inference Providers' permission, accept the "
-            "FLUX.1-Kontext-dev model license, and ensure billing is configured."
-        )
-    if status_code == 400 or isinstance(exc, BadRequestError) or "INVALID" in upper:
-        return "The uploaded image or options were invalid. Please try a different image."
-    if status_code == 503 or "LOADING" in upper:
-        return (
-            "The AI model is still starting up and wasn't ready in time. "
-            "Please try again in about 30 seconds."
-        )
-
-    # Surface a short hint from the provider when we have one — helps debug without raw tracebacks.
-    if api_detail and len(api_detail) < 200:
-        return f"Mockup generation failed: {api_detail}"
-
-    return "Mockup generation failed. Please try again with a different image or options."
-
-
-def _pil_image_to_bytes(image) -> bytes:
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return buffer.getvalue()

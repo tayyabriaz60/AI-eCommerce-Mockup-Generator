@@ -5,6 +5,7 @@ Keeping all env-driven settings in one place makes it easy to extend later
 (e.g. swap storage providers, change model names, add new platforms) without
 hunting through business logic for hardcoded values.
 """
+import logging
 import os
 from pathlib import Path
 
@@ -12,35 +13,38 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+logger = logging.getLogger("config")
+
 BASE_DIR = Path(__file__).resolve().parent
 
-# --- Hugging Face / AI config ---
+# --- Hugging Face ZeroGPU Space / AI config ---
+# HF_MODEL is the Hugging Face Space ID (repo id), not a paid Inference Providers model.
 HF_API_TOKEN = os.getenv("HF_API_TOKEN", "").strip()
 HF_MODEL = os.getenv("HF_MODEL", "black-forest-labs/FLUX.1-Kontext-dev").strip()
-# FLUX Kontext is served via HF Inference Providers (fal), not legacy serverless API.
-HF_PROVIDER = os.getenv("HF_PROVIDER", "fal-ai").strip()
-# Optional: set to your HF *organization name* to bill an Enterprise org account.
-# Leave empty/unset for personal accounts (default HF billing).
-HF_BILL_TO = os.getenv("HF_BILL_TO", "").strip()
+HF_SPACE_TIMEOUT_SECONDS = float(os.getenv("HF_SPACE_TIMEOUT_SECONDS", "120"))
 
 
 def validate_config() -> None:
     """Fail fast at startup if required configuration is missing."""
-    if not HF_API_TOKEN:
-        raise RuntimeError(
-            "HF_API_TOKEN is not set. Add your Hugging Face access token to the "
-            "environment (see .env.example). On Render, paste it in the service's "
-            "Environment tab."
-        )
-    if not HF_API_TOKEN.startswith("hf_"):
-        raise RuntimeError(
-            "HF_API_TOKEN must be a Hugging Face user token (starts with hf_), not a "
-            "third-party provider key. Create one at huggingface.co/settings/tokens "
-            "with 'Make calls to Inference Providers' enabled."
-        )
     if not HF_MODEL:
         raise RuntimeError(
-            "HF_MODEL is not set. Default is black-forest-labs/FLUX.1-Kontext-dev."
+            "HF_MODEL is not set. Default is black-forest-labs/FLUX.1-Kontext-dev "
+            "(the public ZeroGPU Space repo id)."
+        )
+    if HF_SPACE_TIMEOUT_SECONDS <= 0:
+        raise RuntimeError(
+            "HF_SPACE_TIMEOUT_SECONDS must be a positive number of seconds."
+        )
+    if not HF_API_TOKEN:
+        logger.warning(
+            "HF_API_TOKEN is not set — using anonymous ZeroGPU access. "
+            "Add a Hugging Face token (huggingface.co/settings/tokens) for a higher "
+            "free daily ZeroGPU quota."
+        )
+    elif not HF_API_TOKEN.startswith("hf_"):
+        raise RuntimeError(
+            "HF_API_TOKEN must be a Hugging Face user token (starts with hf_), not a "
+            "third-party provider key. Create one at huggingface.co/settings/tokens."
         )
 
 # --- Database ---
